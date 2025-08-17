@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BBQ Grill Challenge</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: manipulation; /* Prevents double-tap zoom on mobile */
+        }
+        .grill {
+            background-image:
+                linear-gradient(rgba(255,255,255,.1) 2px, transparent 2px),
+                linear-gradient(90deg, rgba(255,255,255,.1) 2px, transparent 2px);
+            background-size: 40px 40px;
+            background-color: #333;
+            border: 8px solid #222;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5) inset;
+        }
+        .burger {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            position: absolute;
+            cursor: pointer;
+            transition: transform 0.1s ease, box-shadow 0.2s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+        }
+        .burger:hover {
+            transform: scale(1.1);
+        }
+        .burger.raw { background-color: #ffb6c1; /* Pinkish */ }
+        .burger.cooked { background-color: #8B4513; /* Brown */ }
+        .burger.burned { background-color: #1a1a1a; /* Black */ }
+
+        .progress-bar-container {
+            position: absolute;
+            bottom: -15px;
+            width: 100%;
+            height: 8px;
+            background-color: #555;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0;
+            border-radius: 4px;
+            transition: width 0.1s linear, background-color 0.2s linear;
+        }
+        .progress-bar.cooking { background-color: #4ade80; /* Green */ }
+        .progress-bar.burning { background-color: #f87171; /* Red */ }
+
+        /* Game Over Screen */
+        #gameOverScreen {
+            background-color: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(5px);
+        }
+    </style>
+</head>
+<body class="bg-gray-800 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div id="gameContainer" class="w-full max-w-3xl mx-auto text-center">
+        <h1 class="text-4xl font-bold mb-2">BBQ Grill Challenge</h1>
+        <p class="text-gray-400 mb-4">Click the burgers when they're brown! Don't click too early or let them burn.</p>
+
+        <!-- Score and Stats -->
+        <div class="flex justify-between items-center bg-gray-900 p-4 rounded-lg shadow-lg mb-4 text-xl">
+            <div>Score: <span id="score" class="font-bold text-green-400">0</span></div>
+            <div>Burned: <span id="burnedCount" class="font-bold text-red-400">0</span> / 5</div>
+        </div>
+
+        <!-- The Grill -->
+        <div id="grill" class="grill w-full aspect-square rounded-lg shadow-2xl relative overflow-hidden">
+            <!-- Burgers will be added here by JavaScript -->
+        </div>
+
+        <!-- Start Screen -->
+        <div id="startScreen" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 rounded-lg">
+            <h2 class="text-5xl font-bold mb-4">Ready to Grill?</h2>
+            <button id="startButton" class="bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg transition-transform transform hover:scale-105">
+                Start Game
+            </button>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameOverScreen" class="absolute inset-0 flex-col items-center justify-center rounded-lg hidden">
+            <h2 class="text-6xl font-bold text-red-500 mb-4">GAME OVER</h2>
+            <p class="text-3xl mb-2">Final Score: <span id="finalScore" class="font-bold text-green-400">0</span></p>
+            <button id="restartButton" class="mt-6 bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg transition-transform transform hover:scale-105">
+                Play Again
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const grill = document.getElementById('grill');
+        const scoreEl = document.getElementById('score');
+        const burnedCountEl = document.getElementById('burnedCount');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const startButton = document.getElementById('startButton');
+        const restartButton = document.getElementById('restartButton');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        // --- Game Settings ---
+        const MAX_BURNED_BURGERS = 5;
+        const INITIAL_SPAWN_RATE_MS = 2500;
+        const BURGER_SIZE = 60;
+
+        // --- Game State ---
+        let score = 0;
+        let burnedCount = 0;
+        let burgers = [];
+        let spawnRate = INITIAL_SPAWN_RATE_MS;
+        let spawnTimeout;
+        let gameLoopId;
+        let isGameOver = false;
+
+        // --- Game Logic ---
+
+        /**
+         * Starts or restarts the game, resetting all state variables.
+         */
+        function startGame() {
+            // Reset state
+            score = 0;
+            burnedCount = 0;
+            burgers.forEach(b => b.element.remove()); // Clear existing burgers
+            burgers = [];
+            spawnRate = INITIAL_SPAWN_RATE_MS;
+            isGameOver = false;
+
+            // Update UI
+            updateScore();
+            updateBurnedCount();
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            grill.classList.remove('hidden');
+
+
+            // Start game loops
+            scheduleNextBurger();
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * The main game loop, called every frame.
+         * Updates the state of all burgers on the grill.
+         */
+        function gameLoop() {
+            if (isGameOver) return;
+
+            const now = Date.now();
+            // Iterate backwards to safely remove items while looping
+            for (let i = burgers.length - 1; i >= 0; i--) {
+                const burger = burgers[i];
+                const progress = (now - burger.startTime) / burger.cookTime;
+                burger.progress = progress;
+
+                updateBurgerVisuals(burger);
+
+                // Check for state changes
+                if (progress > 1.0 && burger.state !== 'burned') {
+                    burger.state = 'burned';
+                    if (!burger.penalized) {
+                        score -= 15;
+                        burnedCount++;
+                        burger.penalized = true;
+                        updateScore();
+                        updateBurnedCount();
+                        checkGameOver();
+                    }
+                } else if (progress > 0.4 && burger.state === 'raw') {
+                    burger.state = 'cooked';
+                }
+            }
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * Creates a new burger and adds it to the grill.
+         */
+        function spawnBurger() {
+            const grillRect = grill.getBoundingClientRect();
+            const maxTries = 10;
+            let newBurgerData = null;
+
+            // Try to find a non-overlapping position
+            for (let i = 0; i < maxTries; i++) {
+                const x = Math.random() * (grillRect.width - BURGER_SIZE);
+                const y = Math.random() * (grillRect.height - BURGER_SIZE);
+                const newRect = { x, y, width: BURGER_SIZE, height: BURGER_SIZE };
+
+                let overlaps = burgers.some(b => {
+                    const bRect = { x: b.x, y: b.y, width: BURGER_SIZE, height: BURGER_SIZE };
+                    return (newRect.x < bRect.x + bRect.width &&
+                            newRect.x + newRect.width > bRect.x &&
+                            newRect.y < bRect.y + bRect.height &&
+                            newRect.y + newRect.height > bRect.y);
+                });
+
+                if (!overlaps) {
+                    newBurgerData = createBurgerData(x, y);
+                    break;
+                }
+            }
+
+            if (newBurgerData) {
+                burgers.push(newBurgerData);
+                grill.appendChild(newBurgerData.element);
+            }
+
+            scheduleNextBurger();
+        }
+        
+        /**
+         * Creates the data object and DOM element for a new burger.
+         */
+        function createBurgerData(x, y) {
+            const element = document.createElement('div');
+            element.className = 'burger raw';
+            element.style.left = `${x}px`;
+            element.style.top = `${y}px`;
+
+            const progressBarContainer = document.createElement('div');
+            progressBarContainer.className = 'progress-bar-container';
+            const progressBar = document.createElement('div');
+            progressBar.className = 'progress-bar cooking';
+            progressBarContainer.appendChild(progressBar);
+            element.appendChild(progressBarContainer);
+
+            const burgerData = {
+                x,
+                y,
+                element,
+                progressBar,
+                startTime: Date.now(),
+                // Random cook time between 6 and 12 seconds
+                cookTime: 6000 + Math.random() * 6000,
+                progress: 0,
+                state: 'raw',
+                penalized: false,
+            };
+
+            element.onclick = () => onBurgerClick(burgerData);
+            return burgerData;
+        }
+
+        /**
+         * Handles the logic when a burger is clicked.
+         */
+        function onBurgerClick(burger) {
+            if (isGameOver) return;
+
+            if (burger.state === 'cooked') {
+                score += 10;
+            } else if (burger.state === 'raw') {
+                score -= 5;
+            }
+            // No score change for clicking a burned burger, it's already penalized.
+            
+            updateScore();
+            removeBurger(burger);
+        }
+        
+        /**
+         * Removes a burger from the game state and the DOM.
+         */
+        function removeBurger(burger) {
+            burger.element.remove();
+            burgers = burgers.filter(b => b !== burger);
+        }
+
+        /**
+         * Updates the visual state (color, progress bar) of a burger.
+         */
+        function updateBurgerVisuals(burger) {
+            burger.element.className = `burger ${burger.state}`;
+            
+            const displayProgress = Math.min(burger.progress, 1.0);
+            burger.progressBar.style.width = `${displayProgress * 100}%`;
+
+            if (burger.progress > 1.0) {
+                burger.progressBar.classList.remove('cooking');
+                burger.progressBar.classList.add('burning');
+            }
+        }
+
+        /**
+         * Sets a timeout for the next burger spawn and decreases the spawn rate.
+         */
+        function scheduleNextBurger() {
+            clearTimeout(spawnTimeout);
+            if (isGameOver) return;
+            spawnTimeout = setTimeout(spawnBurger, spawnRate);
+            // Increase difficulty
+            spawnRate = Math.max(500, spawnRate * 0.96);
+        }
+
+        /**
+         * Checks if the game-over condition is met.
+         */
+        function checkGameOver() {
+            if (burnedCount >= MAX_BURNED_BURGERS) {
+                isGameOver = true;
+                cancelAnimationFrame(gameLoopId);
+                clearTimeout(spawnTimeout);
+                finalScoreEl.textContent = score;
+                gameOverScreen.classList.remove('hidden');
+            }
+        }
+
+        // --- UI Update Functions ---
+        function updateScore() {
+            scoreEl.textContent = score;
+        }
+
+        function updateBurnedCount() {
+            burnedCountEl.textContent = burnedCount;
+        }
+
+        // --- Event Listeners ---
+        startButton.addEventListener('click', startGame);
+        restartButton.addEventListener('click', startGame);
+
+    </script>
+</body>
+</html>
